@@ -154,7 +154,9 @@ function noise(col: number, row: number, seed: number): number {
 }
 
 // The remote surfaces' bar: a field of pixels, dense where the work is done, with the count as a pill on the edge.
-function svgBar(fraction: number, label: string, seed: number): { source: string; width: number; height: number } {
+// Live, the lit pixels twinkle, the ones past the edge flicker on as if being worked, and a sheen sweeps the done part.
+// The markup holds its own animation, so it stays the same string across redraws and the frame never restarts.
+function svgBar(fraction: number, label: string, isLive: boolean): { source: string; width: number; height: number } {
   const cols = 72
   const rows = 4
   const cell = 4
@@ -162,19 +164,38 @@ function svgBar(fraction: number, label: string, seed: number): { source: string
   const height = 22
   const top = (height - rows * cell) / 2
   const edge = Math.round(Math.max(0, Math.min(1, fraction)) * cols)
+  // The pill ends at the edge, so the flicker just past it stays visible; with no room before the edge, it starts the bar.
+  const pillWidth = label.length * 7 + 20
+  const pillX = Math.max(0, edge * cell - pillWidth)
+  const frontier = label ? Math.max(edge, Math.ceil((pillX + pillWidth + 2) / cell)) : edge
   let pixels = ''
   for (let c = 0; c < cols; c += 1) {
     for (let r = 0; r < rows; r += 1) {
-      const n = noise(c, r, c < edge ? seed : 0)
-      const isLit = c < edge ? n > 0.18 : n > 0.9
-      if (!isLit) continue
-      const opacity = c < edge ? (0.45 + n * 0.55).toFixed(2) : '0.28'
-      const fill = c < edge ? PURPLE : '#9a9a9a'
-      pixels += `<rect x="${c * cell}" y="${top + r * cell}" width="${cell - 1}" height="${cell - 1}" fill="${fill}" opacity="${opacity}"/>`
+      const n = noise(c, r, 0)
+      const x = c * cell
+      const y = top + r * cell
+      const size = cell - 1
+      if (c < edge && n > 0.18) {
+        const opacity = 0.45 + n * 0.55
+        const twinkle = isLive
+          ? `<animate attributeName="opacity" values="${opacity.toFixed(2)};${(opacity * 0.3).toFixed(2)};${opacity.toFixed(2)}" dur="${(1.1 + n * 1.8).toFixed(2)}s" begin="-${(n * 3).toFixed(2)}s" repeatCount="indefinite"/>`
+          : ''
+        pixels += `<rect x="${x}" y="${y}" width="${size}" height="${size}" fill="${PURPLE}" opacity="${opacity.toFixed(2)}">${twinkle}</rect>`
+      } else if (isLive && c >= frontier && c < frontier + 6 && n > 0.35) {
+        const dur = (0.7 + n * 1.2).toFixed(2)
+        pixels += `<rect x="${x}" y="${y}" width="${size}" height="${size}" fill="${PURPLE}" opacity="0"><animate attributeName="opacity" values="0;${(0.9 - (c - frontier) * 0.12).toFixed(2)};0" dur="${dur}s" begin="-${(n * 2).toFixed(2)}s" repeatCount="indefinite"/></rect>`
+      } else if (c >= edge && n > 0.9) {
+        pixels += `<rect x="${x}" y="${y}" width="${size}" height="${size}" fill="#9a9a9a" opacity="0.28"/>`
+      }
     }
   }
-  const pillWidth = label.length * 7 + 20
-  const pillX = Math.max(0, Math.min(width - pillWidth, edge * cell - pillWidth / 2))
+  const litWidth = edge * cell
+  const sheen =
+    isLive && litWidth > 0
+      ? `<defs><linearGradient id="sheen"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset="0.5" stop-color="#fff" stop-opacity="0.55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient><clipPath id="lit"><rect x="0" y="${top}" width="${litWidth}" height="${rows * cell}"/></clipPath></defs>` +
+        `<g clip-path="url(#lit)"><rect x="-48" y="${top}" width="48" height="${rows * cell}" fill="url(#sheen)"><animate attributeName="x" values="-48;${litWidth}" dur="${Math.max(1.2, litWidth / 120).toFixed(2)}s" repeatCount="indefinite"/></rect></g>`
+      : ''
+  pixels += sheen
   const pill = label
     ? `<rect x="${pillX}" y="0" width="${pillWidth}" height="${height}" rx="${height / 2}" fill="${PURPLE}"/>` +
       `<text x="${pillX + pillWidth / 2}" y="${height / 2 + 4}" text-anchor="middle" font-family="-apple-system,system-ui,sans-serif" font-size="12" font-weight="600" fill="#fff">${label}</text>`
@@ -398,7 +419,7 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const tasks = await read($, plan)
     const list = await read($, agents)
-    const seed = await read($, tick)
+    await read($, tick)
     const c = await read($, cache)
     const now = await $.clock.now()
     const running = list.filter(a => a.status === 'running').length
@@ -443,8 +464,8 @@ export const register: Register = (on, options) => {
     const Svg = e.surface !== 'terminal' && 'Svg' in elements ? elements.Svg : undefined
     let bar
     if (Svg) {
-      const svg = svgBar(fraction, label, running > 0 ? seed : 0)
-      bar = <Svg source={svg.source} alt={label || 'progress'} width={svg.width} height={svg.height} />
+      const svg = svgBar(fraction, label, c.isWorking || running > 0)
+      bar = <Svg source={svg.source} alt={label || 'progress'} width={svg.width} height={svg.height} isInteractive />
     } else {
       const [lit, unlit] = textBar(fraction, 20)
       bar = (

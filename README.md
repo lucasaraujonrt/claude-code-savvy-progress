@@ -2,7 +2,13 @@
 
 A Claude Code mod that shows what Claude and its agents are doing, as it happens.
 
-- **Progress band** above the prompt: the current task, a pixel progress bar with a `Tasks 2/4` pill, the percent done and how many agents are running.
+![The progress band: a pixel bar that twinkles while work runs, the task count, running agents and the prompt cache countdown](assets/savvy-band.gif)
+
+![The band above the prompt and the Agents pane beside the chat](assets/savvy-pane.png)
+
+<sub>Sample data, drawn with the mod's own bar code.</sub>
+
+- **Progress band** above the prompt: the current task, a pixel progress bar with a `Tasks 2/4` pill, the percent done and how many agents are running. While work runs, the done pixels twinkle, the ones just past the pill flicker on and a sheen sweeps across.
 - **Agents pane** beside the chat: every subagent, running, finished or planned, with its model, effort, tool count, context use, tokens, cost and time. Click an agent to see its messages and tool calls live.
 - **Prompt cache coach**: a countdown until the prompt cache goes cold, how much of the last request it served, and a suggestion for what to do: send the next message before it expires, or `/clear` / `/compact` when a cold cache would rewrite a large context.
 
