@@ -37,6 +37,11 @@ test('a full context offers a handoff, and writing it shows it in the pane', asy
 test('band counts the plan, pane lists an agent, a press opens it', async ($, on) => {
   on('command.register', () => ({ value: { command: 'savvy' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
+  // What another mod draws above the prompt, kept under the band.
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>below</Text>
+  })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('tool.call', () => ({ result: {} }))
   on('agent.spawn', () => ({ model: 'claude-opus-5-5', agentId: 'a1' }))

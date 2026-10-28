@@ -503,8 +503,12 @@ export const register: Register = (on, options) => {
       </Box>
     )
 
+    // Whatever another mod draws above the prompt (Squirrel's card) stays, under the band.
+    const below = await next(e)
+    const withBelow = (band: typeof below) => (below ? <Box flexDirection="column" gap={1}>{band}{below}</Box> : band)
+
     if (isWorkIdle) {
-      return (
+      return withBelow(
         <Box flexDirection="row" justifyContent="space-between" paddingX={1}>
           <Box flexDirection="row" gap={2}>
             {cacheChip}
@@ -535,7 +539,7 @@ export const register: Register = (on, options) => {
       )
     }
 
-    return (
+    return withBelow(
       <Box flexDirection="row" alignItems="center" gap={2} paddingX={1}>
         <Box flexDirection="row" flexGrow={1} flexShrink={1} minWidth={0}>
           <Text wrap="truncate">
