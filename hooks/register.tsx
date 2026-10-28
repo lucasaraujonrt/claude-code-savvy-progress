@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, ToolUseSummary, TurnUsage } from 'claude-code'
 
-import type { AgentRow, Cache, Task, TaskStatus } from '../types'
+import type { AgentRow, Cache, Handoff, Task, TaskStatus } from '../types'
 
 const PANE = 'savvy-agents'
 const PLAN_TOOL = 'mcp__ccd_turn__update_plan'
@@ -22,6 +22,20 @@ const cache = atom({ plugin: 'savvy-progress', key: 'cache' } as const, {
   warnedAt: 0,
 })
 const selected = atom({ plugin: 'savvy-progress', key: 'selected' } as const, null)
+const handoff = atom({ plugin: 'savvy-progress', key: 'handoff' } as const, { status: 'idle' })
+
+// Past this share of the context window, long-chat answers degrade: time to move to a fresh chat.
+const HANDOFF_AT = 60
+const HANDOFF_PROMPT = `Write a handoff so a fresh chat can continue this work without this conversation. Use the user's language. At most 900 words, Markdown, these sections in order:
+## Goal — one or two sentences.
+## Where it stands — what works now, what is verified and what is not.
+## Done — the main steps, briefly.
+## Decisions — each with its reason, so they are not reopened.
+## Files — the paths created or changed, one line each on why.
+## Open — what is unfinished, unknown or waiting on someone.
+## Next action — the one concrete thing to do first.
+## Watch out — traps, constraints and preferences the user stated.
+Facts only, from this conversation; no greeting, no closing line.`
 
 // US$ per million tokens: input, output. Cache reads bill at 0.1x input, writes at 1.25x.
 const OPUS: [RegExp, number, number] = [/opus|fable/i, 5, 25]
@@ -269,7 +283,31 @@ function cacheColor(remaining: number, ttl: number): string {
   return remaining < ttl / 3 ? AMBER : GREEN
 }
 
-function setAgent($: EngineInterface, id: string, fn: (row: AgentRow) => AgentRow) {
+// Writes the handoff over the session's own transcript, served from its prompt cache.
+async function writeHandoff($: EngineInterface) {
+  if ((await read($, handoff)).status === 'writing') return
+  await update($, handoff, (): Handoff => ({ status: 'writing' }))
+  void $.ui.open({ id: PANE, title: 'Agents' })
+  const reply = await $.model.fork({ prompt: HANDOFF_PROMPT })
+  const now = await $.clock.now()
+  await update($, handoff, (): Handoff =>
+    reply.isAnswered ? { status: 'ready', text: reply.text, at: now } : { status: 'failed', reason: reply.reason },
+  )
+}
+
+async function compactWithHandoff($: EngineInterface, text: string) {
+  try {
+    const done = await $.session.compact({
+      instructions: `Replace the conversation with this handoff, kept verbatim, as the summary:\n\n${text}`,
+    })
+    const note = 'skip' in done && done.skip ? `Não compactou: ${String(done.skip)}` : 'Conversa compactada com o handoff.'
+    await update($, handoff, v => (v.status === 'ready' ? { ...v, note } : v))
+  } catch {
+    await update($, handoff, v => (v.status === 'ready' ? { ...v, note: 'Espere o turno acabar e tente de novo.' } : v))
+  }
+}
+
+function setAgent($: EngineInterface,id: string, fn: (row: AgentRow) => AgentRow) {
   return update($, agents, list => list.map(row => (row.id === id ? fn(row) : row)))
 }
 
@@ -281,6 +319,10 @@ export const register: Register = (on, options) => {
     await $.command.register({
       name: 'savvy',
       description: 'Open the Savvy Progress pane: every agent, live',
+    })
+    await $.command.register({
+      name: 'handoff',
+      description: 'Write a handoff of this chat, to continue it in a fresh one',
     })
     void $.ui.open({ id: PANE, title: 'Agents' })
 
@@ -310,6 +352,12 @@ export const register: Register = (on, options) => {
     await $.ui.open({ id: PANE, title: 'Agents' })
 
     return { text: 'Savvy Progress: pane opened.' }
+  })
+
+  on('command.run', { command: 'handoff' }, async $ => {
+    void writeHandoff($)
+
+    return { text: 'Savvy Progress: writing the handoff in the Agents pane.' }
   })
 
   on('prompt.submit', async ($, e, next) => {
@@ -429,10 +477,17 @@ export const register: Register = (on, options) => {
     const tip = cacheTip(c, remaining, ttl)
     // Idle, the band stays for a warm cache, or for a cold one big enough that the next message costs real money.
     const isCacheShown = !c.isWorking && tip !== null && (remaining > 0 || c.tokens >= 100_000)
+    const contextPercent = (await $.session.usage()).context.percent ?? 0
+    const needsHandoff = contextPercent >= HANDOFF_AT || (!c.isWorking && remaining <= 0 && c.tokens >= 100_000)
 
-    if (e.props.hasSurvey || (isWorkIdle && !isCacheShown) || (await read($, isBandHidden))) return next(e)
+    if (e.props.hasSurvey || (isWorkIdle && !isCacheShown && !needsHandoff) || (await read($, isBandHidden))) return next(e)
 
     const { Box, Text, Button } = $.ui.resolve(e)
+    const handoffChip = needsHandoff ? (
+      <Button key="savvy-handoff" plain onPress={() => void writeHandoff($)}>
+        <Text color={AMBER}>{`⇄ ctx ${contextPercent}% · handoff`}</Text>
+      </Button>
+    ) : null
     const cacheChip = isCacheShown && tip ? (
       <Text wrap="truncate">
         <Text color={remaining > 0 ? cacheColor(remaining, ttl) : RED}>
@@ -451,7 +506,10 @@ export const register: Register = (on, options) => {
     if (isWorkIdle) {
       return (
         <Box flexDirection="row" justifyContent="space-between" paddingX={1}>
-          {cacheChip}
+          <Box flexDirection="row" gap={2}>
+            {cacheChip}
+            {handoffChip}
+          </Box>
           {controls}
         </Box>
       )
@@ -489,6 +547,7 @@ export const register: Register = (on, options) => {
         {total > 0 && <Text tabular wrap="truncate">{`${Math.round(fraction * 100)}%`}</Text>}
         {running > 0 && <Text color={PURPLE} wrap="truncate">{`◆ ×${running}`}</Text>}
         {cacheChip}
+        {handoffChip}
         {controls}
       </Box>
     )
@@ -568,6 +627,44 @@ export const register: Register = (on, options) => {
       </Box>
     )
 
+    const ho = await read($, handoff)
+    const contextPercent = usage.context.percent ?? 0
+    const { Markdown } = $.ui.resolve(e)
+    const handoffSection =
+      ho.status === 'ready' ? (
+        <Box flexDirection="column" gap={1} borderStyle="round" borderDimColor paddingX={1}>
+          <Text bold>⇄ Handoff pronto</Text>
+          <Markdown text={ho.text} />
+          <Box flexDirection="row" gap={2}>
+            <Button key="savvy-handoff-compact" variant="primary" label="Começar limpo com ele" onPress={() => compactWithHandoff($, ho.text)} />
+            <Button
+              key="savvy-handoff-copy"
+              plain
+              dimColor
+              label="Copiar"
+              onPress={async press => {
+                const copied = await $.ui.copy({ text: ho.text, surface: press.surface })
+                const note = copied.isCopied ? 'Copiado.' : 'Não deu pra copiar aqui: selecione o texto acima.'
+                await update($, handoff, v => (v.status === 'ready' ? { ...v, note } : v))
+              }}
+            />
+            <Button key="savvy-handoff-drop" plain dimColor label="Descartar" onPress={() => update($, handoff, (): Handoff => ({ status: 'idle' }))} />
+          </Box>
+          {ho.note ? <Text dimColor>{ho.note}</Text> : null}
+        </Box>
+      ) : ho.status === 'writing' ? (
+        <Text color={AMBER}>⇄ Escrevendo o handoff…</Text>
+      ) : contextPercent >= HANDOFF_AT || ho.status === 'failed' ? (
+        <Box flexDirection="column">
+          <Text color={AMBER}>
+            {ho.status === 'failed'
+              ? `⇄ O handoff falhou (${ho.reason}).`
+              : `⇄ Contexto em ${contextPercent}%: respostas pioram em conversa longa. Hora de passar pra uma conversa limpa.`}
+          </Text>
+          <Button key="savvy-handoff-write" plain label="Escrever handoff" onPress={() => void writeHandoff($)} />
+        </Box>
+      ) : null
+
     const card = (a: AgentRow) => {
       const [, color] = LEVELS[a.effort ?? ''] ?? ['', '#888888']
       const { done, total, current } = count(a.tasks)
@@ -620,6 +717,7 @@ export const register: Register = (on, options) => {
             <Text dimColor={tip.color === GREEN}>{tip.long}</Text>
           </Text>
         )}
+        {handoffSection}
         {list.length === 0 && planned.length === 0 && (
           <Text dimColor>No agents yet. They show up here as soon as one starts.</Text>
         )}

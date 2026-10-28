@@ -31,6 +31,12 @@ export type Cache = {
   warnedAt: number
 }
 
+export type Handoff =
+  | { status: 'idle' }
+  | { status: 'writing' }
+  | { status: 'ready'; text: string; at: number; note?: string }
+  | { status: 'failed'; reason: string }
+
 declare module 'claude-code' {
   interface PluginState {
     'savvy-progress': {
@@ -43,6 +49,7 @@ declare module 'claude-code' {
       isBandHidden: boolean
       cache: Cache
       selected: string | null
+      handoff: Handoff
     }
   }
 }

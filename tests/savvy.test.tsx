@@ -14,6 +14,26 @@ const PANE = {
   },
 } as const
 
+test('a full context offers a handoff, and writing it shows it in the pane', async ($, on) => {
+  on('command.register', () => ({ value: { command: 'x' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('clock.now', () => ({ value: 1_000 }))
+  on('clock.every', () => ({ value: undefined }) as never)
+  on('session.usage', () => ({
+    value: { startedAt: 0, context: { window: 200_000, percent: 72 }, rateLimits: [], cost: { usd: 1.1 } },
+  }))
+  on('model.fork', () => ({ value: { isAnswered: true, text: '## Goal\nShip the mod.', usage: {} } }) as never)
+
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await pane.find({ type: 'Text', text: /Contexto em 72%/ }))?.text).toContain('72%')
+  await pane.press({ key: 'savvy-handoff-write' } as never)
+  expect((await pane.find({ type: 'Text', text: /Handoff pronto/ }))?.text).toContain('Handoff pronto')
+  await pane.unmount()
+})
+
 test('band counts the plan, pane lists an agent, a press opens it', async ($, on) => {
   on('command.register', () => ({ value: { command: 'savvy' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))

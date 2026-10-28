@@ -12,7 +12,9 @@ A Claude Code mod that shows what Claude and its agents are doing, as it happens
 - **Agents pane** beside the chat: every subagent, running, finished or planned, with its model, effort, tool count, context use, tokens, cost and time. Click an agent to see its messages and tool calls live.
 - **Prompt cache coach**: a countdown until the prompt cache goes cold, how much of the last request it served, and a suggestion for what to do: send the next message before it expires, or `/clear` / `/compact` when a cold cache would rewrite a large context.
 
-Run `/savvy` to reopen the pane and the band.
+- **Handoff**: answers get worse as a chat grows. Past 60% of the context window, or when a cold cache would rewrite a large context, the band shows `⇄ ctx 72% · handoff`. One press writes a handoff over the chat's own cached transcript (goal, where it stands, decisions, files, what is open, the next action) and shows it in the pane, with **Começar limpo com ele** to compact the chat down to that handoff, and **Copiar** to paste it into a new chat.
+
+Run `/savvy` to reopen the pane and the band, and `/handoff` to write a handoff at any time.
 
 ## Install
 
