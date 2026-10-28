@@ -1,0 +1,5 @@
+{
+  "name": "claude-code-savvy-progress",
+  "owner": { "name": "lucasaraujonrt" },
+  "plugins": [{ "name": "savvy-progress", "source": "./" }]
+}
